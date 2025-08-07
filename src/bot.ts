@@ -15,17 +15,17 @@ const bot = new Telegraf(process.env.BOT_TOKEN!);
 
 const sanitize = (str: string) => str.replace(/[<>:"/\\|?*]+/g, "");
 
-const downloadYouTubeAudio = async (url: string): Promise<string> => {
+const downloadYouTubeAudio = async (url: string): Promise<string[]> => {
   const outputTemplate = "%(title)s.%(ext)s";
-  const timeoutMs = 5 * 60 * 1000;
+  const timeoutMs = 10 * 60 * 1000; // 10 min max for playlists
 
   const ytdlpPromise = ytdlp(url, {
     extractAudio: true,
     audioFormat: "mp3",
     audioQuality: 192,
     output: outputTemplate,
-    noPlaylist: true,
     ffmpegLocation: "/usr/bin/ffmpeg",
+    playlistItems: "1-5",
   });
 
   const timeoutPromise = new Promise<never>((_, reject) =>
@@ -37,17 +37,19 @@ const downloadYouTubeAudio = async (url: string): Promise<string> => {
   const files = await glob("*.mp3");
 
   if (files.length === 0) {
-    throw new Error("MP3 file not found after yt-dlp finished.");
+    throw new Error("No MP3 files found after yt-dlp.");
   }
 
-  const originalFile = files[0];
-  const safeName = sanitize(originalFile);
-
-  if (safeName !== originalFile) {
-    await fs.rename(originalFile, safeName);
+  const renamedFiles: string[] = [];
+  for (const file of files) {
+    const safeName = sanitize(file);
+    if (safeName !== file) {
+      await fs.rename(file, safeName);
+    }
+    renamedFiles.push(safeName);
   }
 
-  return safeName;
+  return renamedFiles;
 };
 
 bot.start((ctx) =>
@@ -123,24 +125,26 @@ bot.on("text", async (ctx) => {
   const url = ctx.message.text.trim();
 
   if (!url.startsWith("http")) {
-    return ctx.reply("❗ Please send a valid YouTube URL.");
+    return ctx.reply("❗ Please send a valid YouTube URL or playlist link.");
   }
 
   const processingMsg = await ctx.reply("⏳ Downloading and converting...");
 
   try {
-    const mp3Path = await downloadYouTubeAudio(url);
+    const mp3Paths = await downloadYouTubeAudio(url);
 
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      "✅ MP3 ready! Sending now..."
+      `✅ ${mp3Paths.length} MP3(s) ready! Sending now...`
     );
 
-    await ctx.replyWithAudio({ source: mp3Path });
+    for (const mp3Path of mp3Paths) {
+      await ctx.replyWithAudio({ source: mp3Path });
+      unlink(mp3Path, () => {});
+    }
 
-    unlink(mp3Path, () => {});
     setTimeout(() => {
       ctx.telegram
         .deleteMessage(ctx.chat.id, processingMsg.message_id)
