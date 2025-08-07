@@ -25,5 +25,5 @@ Built with [Telegraf](https://telegraf.js.org/), [yt-dlp](https://github.com/yt-
 
 ```bash
 git clone https://github.com/kyawsoe-dev/video2mp3-converter-bot.git
-cd telegram-mp3-bot
+cd video2mp3-converter-bot
 ```
