@@ -8,14 +8,18 @@ import { sanitize } from "./sanitize";
 export async function downloadYouTubeAudio(url: string): Promise<string[]> {
   log("Starting YouTube download", { url });
 
+  const oldFiles = await glob("*.mp3");
+  await Promise.all(oldFiles.map((f) => fs.unlink(f)));
+
   await Promise.race([
-    ytdlp(url, {
+    await ytdlp(url, {
       extractAudio: true,
       audioFormat: "mp3",
       audioQuality: 192,
       output: "%(title)s.%(ext)s",
       ffmpegLocation: config.FFMPEG_PATH,
       noPlaylist: true,
+      format: "bestaudio/best",
     }),
     new Promise((_, reject) =>
       setTimeout(() => reject(new Error("yt-dlp timed out")), 600000)
