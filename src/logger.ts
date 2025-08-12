@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 import { config } from "./config";
 
-const logFile = join(process.cwd(), config.LOG_DIR, "bot.log");
+function getLogFilePath(): string {
+  const date = new Date();
+  const fileName = `${date.getFullYear()}-${String(
+    date.getMonth() + 1
+  ).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}.log`;
+
+  return join(process.cwd(), config.LOG_DIR, fileName);
+}
 
 export function log(message: string, data?: any) {
   const timestamp = new Date().toISOString();
@@ -11,8 +18,8 @@ export function log(message: string, data?: any) {
   if (!existsSync(config.LOG_DIR)) {
     mkdirSync(config.LOG_DIR, { recursive: true });
   }
+  const logFile = getLogFilePath();
 
-  console.log(formatted, data ?? "");
   appendFileSync(
     logFile,
     `${formatted}${data ? " " + JSON.stringify(data) : ""}\n`

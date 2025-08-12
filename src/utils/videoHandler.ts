@@ -17,7 +17,7 @@ export async function handleVideo(ctx: any) {
         ctx.chat.id,
         processingMsg.message_id,
         undefined,
-        "❌ Sorry, video size exceeds 20MB limit for bots. Please send a smaller video."
+        "Sorry, video size exceeds 20MB limit. Please send a smaller video."
       );
     }
 
@@ -59,7 +59,7 @@ export async function handleVideo(ctx: any) {
         ctx.chat.id,
         processingMsg.message_id,
         undefined,
-        "❌ Audio file is too large (>50MB) after compression. Try a shorter video."
+        "Audio file is too large (>50MB) after compression. Try a shorter video."
       );
     }
 
@@ -78,7 +78,7 @@ export async function handleVideo(ctx: any) {
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      "✅ Done! Enjoy your audio."
+      "Done! Enjoy your audio."
     );
   } catch (err: any) {
     log("Video processing error", err);

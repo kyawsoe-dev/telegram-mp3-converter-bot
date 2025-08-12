@@ -22,10 +22,24 @@ async function getYouTubeVideoInfo(url: string) {
   };
 }
 
-function compressAudio(inputPath: string, outputPath: string): Promise<void> {
+export function compressAudio(
+  inputPath: string,
+  outputPath: string,
+  onProgress?: (percent: number) => void
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    let lastUpdate = Date.now();
+
     ffmpeg(inputPath)
       .audioBitrate(64)
+      .on("progress", (progress) => {
+        const percent = progress.percent ? Math.min(progress.percent, 100) : 0;
+
+        if (onProgress && Date.now() - lastUpdate >= 5000) {
+          onProgress(percent);
+          lastUpdate = Date.now();
+        }
+      })
       .on("end", () => resolve())
       .on("error", (err) => reject(err))
       .save(outputPath);
@@ -39,10 +53,20 @@ export async function handleYouTubeUrl(ctx: any) {
     return ctx.reply("❗ Please send a valid YouTube URL.");
   }
 
-  const processingMsg = await ctx.reply("⏳ Downloading and converting...");
+  let progressMsg = await ctx.reply("⏳ Downloading and converting...");
 
   try {
     const info = await getYouTubeVideoInfo(url);
+    const maxDurationSeconds = 60 * 60;
+    if (info.duration > maxDurationSeconds) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        progressMsg.message_id,
+        undefined,
+        "Request too large: video duration exceeds 60 minutes. Please choose a shorter video."
+      );
+      return;
+    }
 
     const files = await downloadYouTubeAudio(url);
 
@@ -56,7 +80,18 @@ export async function handleYouTubeUrl(ctx: any) {
       `compressed-${randomUUID()}.mp3`
     );
 
-    await compressAudio(originalFile, compressedFile);
+    await compressAudio(originalFile, compressedFile, async (percent) => {
+      try {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          progressMsg.message_id,
+          undefined,
+          `🎧 Compressing audio... ${percent.toFixed(1)}%`
+        );
+      } catch (err) {
+        console.error("Failed to update progress message:", err);
+      }
+    });
 
     const stats = statSync(compressedFile);
     const maxFileSize = 50 * 1024 * 1024;
@@ -70,9 +105,9 @@ export async function handleYouTubeUrl(ctx: any) {
 
       return ctx.telegram.editMessageText(
         ctx.chat.id,
-        processingMsg.message_id,
+        progressMsg.message_id,
         undefined,
-        "❌ Sorry, the audio file is too large (>50MB) even after compression."
+        "Sorry, the audio file is too large (>50MB) even after compression."
       );
     }
 
@@ -97,17 +132,17 @@ export async function handleYouTubeUrl(ctx: any) {
 
     await ctx.telegram.editMessageText(
       ctx.chat.id,
-      processingMsg.message_id,
+      progressMsg.message_id,
       undefined,
-      "✅ Done! Enjoy your audio."
+      "Done! Enjoy your audio."
     );
   } catch (err: any) {
     log("YouTube handler error", err);
     await ctx.telegram.editMessageText(
       ctx.chat.id,
-      processingMsg.message_id,
+      progressMsg.message_id,
       undefined,
-      `❌ ${err.message}`
+      `${err.message}`
     );
   }
 }

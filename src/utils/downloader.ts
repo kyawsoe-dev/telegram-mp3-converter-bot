@@ -2,12 +2,9 @@ import ytdlp from "yt-dlp-exec";
 import { glob } from "glob";
 import { promises as fs } from "fs";
 import { config } from "../config";
-import { log } from "../logger";
 import { sanitize } from "./sanitize";
 
 export async function downloadYouTubeAudio(url: string): Promise<string[]> {
-  log("Starting YouTube download", { url });
-
   const oldFiles = await glob("*.mp3");
   await Promise.all(oldFiles.map((f) => fs.unlink(f)));
 
@@ -22,7 +19,7 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
       format: "bestaudio/best",
     }),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("yt-dlp timed out")), 600000)
+      setTimeout(() => reject(new Error("yt-dlp timed out")), 3600000)
     ),
   ]);
 
@@ -36,6 +33,5 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
     renamed.push(safe);
   }
 
-  log("Download complete", { files: renamed });
   return renamed;
 }

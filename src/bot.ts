@@ -1,38 +1,44 @@
-import type { Message } from "telegraf/typings/core/types/typegram";
-import { Telegraf, Input } from "telegraf";
+import { Message } from "telegraf/typings/core/types/typegram";
+import { Telegraf, Markup, Context } from "telegraf";
 import { createWriteStream, unlink } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import fetch from "node-fetch";
-import ffprobe from "fluent-ffmpeg";
-import ffmpeg from "fluent-ffmpeg";
-import { Context } from "telegraf";
-import { config } from "./config";
-import { log } from "./logger";
-import { handleVideo } from "./utils/videoHandler";
-import { handleYouTubeUrl } from "./utils/urlHandler";
-import { cutAudio } from "./utils/audioEditor";
-import { transcribe } from "./utils/speechToText";
-import { searchYouTubeMP3 } from "./utils/musicSearch";
-import { downloadYouTubeAudio } from "./utils/downloader";
+import {
+  timeStrToSeconds,
+  secondsToTimeStr,
+  getAudioDuration,
+  handleVideo,
+  handleYouTubeUrl,
+  cutAudio,
+  transcribe,
+  searchYouTubeMP3,
+  downloadYouTubeAudio,
+  mergeAndSend,
+  isAudioMessage,
+  generateEndTimeButtons,
+  generateTimeButtons,
+  log,
+  config,
+} from "./utils";
 
 const bot = new Telegraf(config.BOT_TOKEN);
 
 bot.telegram.setMyCommands([
   { command: "start", description: "Show welcome message & help" },
-  { command: "video", description: "Download video from URL" },
+  { command: "search", description: "Search & download music from YouTube" },
+  { command: "cut", description: "Trim audio: /cut start=00:30 end=01:20" },
+  { command: "merge", description: "Merge multiple audios (TBD)" },
   { command: "mp3", description: "Download MP3 from URL" },
+  { command: "video", description: "Download video from URL" },
   // { command: "transcribe", description: "Transcribe audio reply" },
   // { command: "voice2text", description: "Transcribe voice message" },
-  { command: "merge", description: "Merge multiple audios (TBD)" },
-  { command: "cut", description: "Trim audio: /cut start=00:30 end=01:20" },
-  { command: "search", description: "Search & download music from YouTube" },
 ]);
 
 bot.use(async (ctx, next) => {
   const isText = ctx.updateType === "message" && "text" in ctx.message!;
 
-  log("Incoming update", {
+  log("Incoming", {
     type: ctx.updateType,
     user: ctx.from?.username || ctx.from?.id,
     chatId: ctx.chat?.id,
@@ -50,13 +56,13 @@ bot.use(async (ctx, next) => {
 bot.start((ctx) =>
   ctx.reply(
     "\uD83C\uDFB5 Send a video or YouTube link to convert to MP3\n" +
-      "\uD83C\uDFAC /video <url> — Download video\n" +
-      "\uD83C\uDFB5 /mp3 <url> — Download MP3\n" +
-      "\uD83E\uDDE0 /transcribe — Reply to audio to transcribe\n" +
-      // "\uD83C\uDFA4 /voice2text — Transcribe voice message\n" +
-      // "\uD83D\uDCC2 /merge — Merge multiple audios (TBD)\n" +
+      "\uD83C\uDFA7 /search <song name> — Find & download music\n" +
       "\uD83D\uDD0A /cut start=00:30 end=01:20 — Trim audio\n" +
-      "\uD83C\uDFA7 /search <song name> — Find & download music\n\n" +
+      "\uD83D\uDCC2 /merge — Merge multiple audios (TBD)\n" +
+      "\uD83C\uDFB5 /mp3 <url> — Download MP3\n" +
+      "\uD83C\uDFAC /video <url> — Download video\n" +
+      // "\uD83E\uDDE0 /transcribe — Reply to audio to transcribe\n" +
+      // "\uD83C\uDFA4 /voice2text — Transcribe voice message\n" +
       "You can also just send a song name to search directly."
   )
 );
@@ -89,7 +95,7 @@ bot.on("text", async (ctx, next) => {
         ctx.chat.id,
         processingMsg.message_id,
         undefined,
-        "❌ No results found."
+        "No results found."
       );
     }
 
@@ -104,26 +110,31 @@ bot.on("text", async (ctx, next) => {
 
     const files = await downloadYouTubeAudio(result.url);
 
+    if (!files.length) {
+      throw new Error("Failed to download audio.");
+    }
+
     await ctx.replyWithAudio({ source: files[0] });
 
-    files.forEach((file) => {
+    for (const file of files) {
       unlink(file, (err) => {
         if (err) console.error(`Failed to delete file ${file}:`, err);
       });
-    });
+    }
 
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
   } catch (err: any) {
+    console.error(err);
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      `❌ Error: ${err.message}`
+      `Error: ${err.message}`
     );
   }
 });
 
-// video command size max > 50MB
+// video command size max > 20MB
 bot.on("video", handleVideo);
 
 // search command
@@ -140,7 +151,7 @@ bot.command("search", async (ctx) => {
         ctx.chat.id,
         processingMsg.message_id,
         undefined,
-        "❌ No results found."
+        "No results found."
       );
     }
 
@@ -169,183 +180,163 @@ bot.command("search", async (ctx) => {
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      `❌ Error: ${err.message}`
+      `Error: ${err.message}`
     );
   }
 });
 
-// audio duration parsing
-function timeStrToSeconds(timeStr: string): number {
-  const parts = timeStr.split(":").map(Number);
-  if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  } else if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
-  } else if (parts.length === 1) {
-    return parts[0];
+// cut audio command
+type AudioMessage = Message & { audio: { file_id: string } };
+
+const userCutSelections = new Map<
+  number,
+  {
+    start?: string;
+    end?: string;
+    audioMessage?: AudioMessage;
+    audioDuration?: number;
   }
-  return 0;
-}
+>();
 
-function getAudioDuration(filePath: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    ffprobe.ffprobe(filePath, (err, metadata) => {
-      if (err) return reject(err);
-      const duration = metadata?.format?.duration;
-      if (!duration) return reject(new Error("Cannot get audio duration"));
-      resolve(duration);
-    });
-  });
-}
-
-// cut auidio command
 bot.command("cut", async (ctx) => {
-  console.log("Received /cut command", ctx.message.text);
-  const text = ctx.message.text;
+  const reply = ctx.message?.reply_to_message;
 
-  const startMatch = text.match(/start=(\S+)/);
-  const endMatch = text.match(/end=(\S+)/);
-
-  if (!startMatch && !endMatch) {
-    return ctx.reply(
-      "❗ You must specify at least one: start or end time.\nExample: /cut start=00:30 end=01:00"
-    );
+  if (!isAudioMessage(reply)) {
+    return ctx.reply("❗ Please reply to an audio message with /cut command.");
   }
 
-  const startStr = startMatch ? startMatch[1] : "0";
-  const endStr = endMatch ? endMatch[1] : undefined;
-
-  const reply = ctx.message.reply_to_message;
-  const lastAudio = (reply as any)?.audio;
-  if (!lastAudio) return ctx.reply("Reply to an audio message with /cut");
-
-  const processingMsg = await ctx.reply("⏳ Processing audio cut...");
+  const lastAudio = reply.audio;
+  const processingMsg = await ctx.reply("⏳ Fetching audio info...");
 
   try {
     const link = await ctx.telegram.getFileLink(lastAudio.file_id);
     const filePath = join(process.cwd(), `${randomUUID()}.mp3`);
 
     const res = await fetch(link.href);
-    const fileStream = createWriteStream(filePath);
+    if (!res.body) throw new Error("No response body");
+
     await new Promise<void>((resolve, reject) => {
-      if (!res.body) return reject("No response body");
-      res.body
-        .pipe(fileStream)
-        .on("finish", () => resolve())
-        .on("error", reject);
+      const fileStream = createWriteStream(filePath);
+      res.body.pipe(fileStream).on("finish", resolve).on("error", reject);
     });
 
     const audioDuration = await getAudioDuration(filePath);
-    const startSec = timeStrToSeconds(startStr);
-    const endSec = endStr ? timeStrToSeconds(endStr) : audioDuration;
+    unlink(filePath, () => {});
 
-    if (startSec >= audioDuration) {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        processingMsg.message_id,
-        undefined,
-        `❌ Start time (${startStr}) is beyond audio duration (${Math.floor(
-          audioDuration
-        )}s).`
-      );
-      return;
-    }
-
-    if (endSec > audioDuration) {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        processingMsg.message_id,
-        undefined,
-        `❌ End time (${endStr}) is beyond audio duration (${Math.floor(
-          audioDuration
-        )}s).`
-      );
-      return;
-    }
-
-    if (startSec >= endSec) {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        processingMsg.message_id,
-        undefined,
-        `❌ Start time must be less than end time.`
-      );
-      return;
-    }
-
-    const cutFile = await cutAudio(filePath, startStr, endStr);
-
-    await ctx.replyWithAudio(Input.fromLocalFile(cutFile));
-
-    [filePath, cutFile].forEach((file) => {
-      unlink(file, (err) => {
-        if (err) {
-          console.error(`Failed to delete file ${file}:`, err);
-        } else {
-          console.log(`Deleted file: ${file}`);
-        }
-      });
-    });
+    const startButtons = generateTimeButtons(audioDuration);
 
     await ctx.telegram.editMessageText(
-      ctx.chat.id,
+      ctx.chat!.id,
       processingMsg.message_id,
       undefined,
-      "✅ Audio cut complete!"
+      "Select the *start time* for trimming:",
+      {
+        parse_mode: "Markdown",
+        reply_markup: Markup.inlineKeyboard(startButtons).reply_markup,
+      }
     );
+
+    userCutSelections.set(ctx.from.id, {
+      audioMessage: reply,
+      audioDuration,
+    });
   } catch (err: any) {
-    console.error(err);
     await ctx.telegram.editMessageText(
-      ctx.chat.id,
+      ctx.chat!.id,
       processingMsg.message_id,
       undefined,
-      `❌ Failed to cut audio: ${err.message}`
+      `Failed to fetch audio info: ${err.message}`
     );
   }
 });
 
-// merge audios
-function mergeAudios(inputs: string[], output: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const command = ffmpeg();
-    inputs.forEach((input) => command.input(input));
-    command
-      .on("error", reject)
-      .on("end", () => resolve(output))
-      .mergeToFile(output, join(process.cwd(), "tmp"));
-  });
-}
+bot.on("callback_query", async (ctx) => {
+  if (!ctx.callbackQuery || !("data" in ctx.callbackQuery)) return;
+  const data = ctx.callbackQuery.data!;
+  if (!data.startsWith("cut_")) return;
 
-async function mergeAndSend(
-  ctx: Context,
-  audioFileIds: string[]
-): Promise<void> {
-  const filePaths: string[] = [];
-
-  for (const fileId of audioFileIds) {
-    const link = await ctx.telegram.getFileLink(fileId);
-    const filePath = join(process.cwd(), `${randomUUID()}.mp3`);
-    const res = await fetch(link.href);
-
-    await new Promise<void>((resolve, reject) => {
-      const stream = createWriteStream(filePath);
-      res.body?.pipe(stream).on("finish", resolve).on("error", reject);
-    });
-
-    filePaths.push(filePath);
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  if (!userCutSelections.has(userId)) {
+    userCutSelections.set(userId, {});
   }
 
-  const outputFile = join(process.cwd(), `merged-${randomUUID()}.mp3`);
-  await mergeAudios(filePaths, outputFile);
+  const selection = userCutSelections.get(userId)!;
 
-  await ctx.replyWithAudio(
-    { source: outputFile },
-    { caption: "✅ Merged audio file." }
-  );
+  // START selection
+  if (data.startsWith("cut_start_")) {
+    selection.start = data.replace("cut_start_", "");
+    const startSeconds = timeStrToSeconds(selection.start);
 
-  filePaths.forEach((file) => unlink(file, () => {}));
-  unlink(outputFile, () => {});
-}
+    const audioDuration = selection.audioDuration ?? 0;
+    const endButtons = generateEndTimeButtons(audioDuration, startSeconds);
+
+    await ctx.editMessageText(
+      `Start time set to *${selection.start}*.\nNow select the *end time*:`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: Markup.inlineKeyboard(endButtons).reply_markup,
+      }
+    );
+  }
+
+  // END selection
+  else if (data.startsWith("cut_end_")) {
+    selection.end = data.replace("cut_end_", "");
+    await ctx.answerCbQuery(`End time set to ${selection.end}`);
+  }
+
+  // DONE
+  else if (data === "cut_done") {
+    if (!selection.start) {
+      return ctx.answerCbQuery("Please select start time first.");
+    }
+
+    const lastAudio = selection.audioMessage?.audio;
+    if (!lastAudio) {
+      return ctx.answerCbQuery("Audio info missing.");
+    }
+
+    await ctx.editMessageText("⏳ Processing audio cut...");
+
+    try {
+      const link = await ctx.telegram.getFileLink(lastAudio.file_id);
+      const filePath = join(process.cwd(), `cutted-${randomUUID()}.mp3`);
+
+      const res = await fetch(link.href);
+      if (!res.body) throw new Error("No response body");
+
+      await new Promise<void>((resolve, reject) => {
+        const fileStream = createWriteStream(filePath);
+        res.body.pipe(fileStream).on("finish", resolve).on("error", reject);
+      });
+
+      const endTime =
+        selection.end ?? secondsToTimeStr(selection.audioDuration ?? 0);
+
+      const cutFile = await cutAudio(filePath, selection.start!, endTime);
+
+      await ctx.replyWithAudio({ source: cutFile });
+
+      unlink(filePath, () => {});
+      unlink(cutFile, () => {});
+
+      await ctx.editMessageText("Audio cut complete!");
+    } catch (err: any) {
+      await ctx.editMessageText(`Failed to cut audio: ${err.message}`);
+    }
+
+    userCutSelections.delete(userId);
+  }
+
+  // CANCEL
+  else if (data === "cut_cancel") {
+    await ctx.editMessageText("Cut operation cancelled.");
+    userCutSelections.delete(userId);
+  }
+
+  await ctx.answerCbQuery();
+});
 
 // keep user audios in memory
 const userAudios: Record<number, string[]> = {};
@@ -367,6 +358,7 @@ bot.on("audio", (ctx) => {
   );
 });
 
+// merege audios command
 bot.command("merge", async (ctx: Context) => {
   const userId = ctx.from?.id;
   if (!userId) return;
@@ -420,7 +412,7 @@ bot.command("transcribe", async (ctx) => {
     });
   } catch (err: any) {
     console.error("Transcription error:", err);
-    await ctx.reply(`❌ Error during transcription: ${err.message || err}`);
+    await ctx.reply(`Error during transcription: ${err.message || err}`);
   }
 });
 
@@ -438,7 +430,7 @@ bot.command("voice2text", async (ctx) => {
 
   const res = await fetch(fileLink.href);
   if (!res.body) {
-    return ctx.reply("❌ Failed to download voice file.");
+    return ctx.reply("Failed to download voice file.");
   }
 
   await new Promise<void>((resolve, reject) => {
