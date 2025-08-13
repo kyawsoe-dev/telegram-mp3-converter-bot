@@ -31,11 +31,13 @@ export function compressAudio(
     let lastUpdate = Date.now();
 
     ffmpeg(inputPath)
-      .audioBitrate(64)
+      .audioCodec("libmp3lame")
+      .audioChannels(1)
+      .audioBitrate("48k")
+      .audioFrequency(22050)
       .on("progress", (progress) => {
         const percent = progress.percent ? Math.min(progress.percent, 100) : 0;
-
-        if (onProgress && Date.now() - lastUpdate >= 5000) {
+        if (onProgress && Date.now() - lastUpdate >= 3000) {
           onProgress(percent);
           lastUpdate = Date.now();
         }

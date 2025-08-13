@@ -18,6 +18,7 @@ import {
   isAudioMessage,
   generateEndTimeButtons,
   generateTimeButtons,
+  handleTikTokUrl,
   log,
   config,
 } from "./utils";
@@ -31,8 +32,6 @@ bot.telegram.setMyCommands([
   { command: "merge", description: "Merge multiple audios (TBD)" },
   { command: "mp3", description: "Download MP3 from URL" },
   { command: "video", description: "Download video from URL" },
-  // { command: "transcribe", description: "Transcribe audio reply" },
-  // { command: "voice2text", description: "Transcribe voice message" },
 ]);
 
 bot.use(async (ctx, next) => {
@@ -61,8 +60,6 @@ bot.start((ctx) =>
       "\uD83D\uDCC2 /merge — Merge multiple audios (TBD)\n" +
       "\uD83C\uDFB5 /mp3 <url> — Download MP3\n" +
       "\uD83C\uDFAC /video <url> — Download video\n" +
-      // "\uD83E\uDDE0 /transcribe — Reply to audio to transcribe\n" +
-      // "\uD83C\uDFA4 /voice2text — Transcribe voice message\n" +
       "You can also just send a song name to search directly."
   )
 );
@@ -82,11 +79,17 @@ bot.on("text", async (ctx, next) => {
     return handleYouTubeUrl(ctx);
   }
 
-  if (text.length < 2) {
-    return ctx.reply("❗ Please send a valid YouTube URL or use a command.");
+  if (text.startsWith("http") && text.includes("tiktok.com")) {
+    return handleTikTokUrl(ctx);
   }
 
-  const processingMsg = await ctx.reply("⏳ Searching on YouTube...");
+  if (text.length < 2) {
+    return ctx.reply(
+      "❗ Please send a valid YouTube/TikTok URL or use a command."
+    );
+  }
+
+  const processingMsg = await ctx.reply("⏳ Searching on Youtube ...");
 
   try {
     const result = await searchYouTubeMP3(text);
@@ -372,77 +375,6 @@ bot.command("merge", async (ctx: Context) => {
   await ctx.reply(`⏳ Merging ${audios.length} audios...`);
   await mergeAndSend(ctx, audios);
   userAudios[userId] = [];
-});
-
-// transcribe command
-function hasAudioOrVoice(msg: any): msg is { audio?: any; voice?: any } {
-  return msg && (msg.audio !== undefined || msg.voice !== undefined);
-}
-
-bot.command("transcribe", async (ctx) => {
-  const reply = ctx.message?.reply_to_message;
-
-  if (!reply || !hasAudioOrVoice(reply)) {
-    return ctx.reply("Reply to an audio/voice message with /transcribe");
-  }
-
-  const audio = reply.audio ?? reply.voice;
-
-  if (!audio)
-    return ctx.reply("Reply to an audio/voice message with /transcribe");
-
-  try {
-    const link = await ctx.telegram.getFileLink(audio.file_id);
-    const filePath = join(process.cwd(), `${randomUUID()}.mp3`);
-
-    const res = await fetch(link.href);
-    if (!res.body) return ctx.reply("Failed to download audio");
-
-    await new Promise<void>((resolve, reject) => {
-      const stream = createWriteStream(filePath);
-      res.body.pipe(stream).on("finish", resolve).on("error", reject);
-    });
-
-    const result = await transcribe(filePath);
-
-    await ctx.reply(`📝 Transcription:\n${result}`);
-
-    unlink(filePath, (err) => {
-      if (err) console.error("Failed to delete temp file:", err);
-    });
-  } catch (err: any) {
-    console.error("Transcription error:", err);
-    await ctx.reply(`Error during transcription: ${err.message || err}`);
-  }
-});
-
-// voice2text command
-bot.command("voice2text", async (ctx) => {
-  const message = ctx.message;
-
-  if (!("voice" in message)) {
-    return ctx.reply("🎤 Please send a voice message to convert to text.");
-  }
-
-  const voiceMessage = message as Message.VoiceMessage;
-  const fileLink = await ctx.telegram.getFileLink(voiceMessage.voice.file_id);
-  const filePath = join(process.cwd(), `${randomUUID()}.mp3`);
-
-  const res = await fetch(fileLink.href);
-  if (!res.body) {
-    return ctx.reply("Failed to download voice file.");
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const fileStream = createWriteStream(filePath);
-    res.body
-      .pipe(fileStream)
-      .on("finish", () => resolve())
-      .on("error", reject);
-  });
-
-  const result = await transcribe(filePath);
-  await ctx.reply(`📝 Voice transcription:\n${result}`);
 });
 
 // start the bot

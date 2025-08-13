@@ -11,3 +11,4 @@ export * from "./audioEditor";
 export * from "./mergeAndSend";
 export * from "./isAudioMessage";
 export * from "./timeButtons";
+export * from "./tiktokUrlHandler";
