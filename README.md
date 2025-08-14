@@ -1,4 +1,4 @@
-# 🎵 Telegram MP3 Converter Bot
+# 🎵 Telegram Bot
 
 A Telegram bot that converts:
 
