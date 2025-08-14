@@ -1,7 +1,6 @@
 export * from "../config";
 export * from "../logger";
 export * from "./downloader";
-export * from "./speechToText";
 export * from "./urlHandler";
 export * from "./videoHandler";
 export * from "./time";

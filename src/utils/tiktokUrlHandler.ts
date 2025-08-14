@@ -33,8 +33,36 @@ async function fetchTikTokVideo(url: string) {
   while (attempts < TIKTOK_API_KEYS.length) {
     const key = TIKTOK_API_KEYS[currentKeyIndex];
     try {
-      const response = await axios.get(process.env.TIKTOK_API_URL!, {
+      const response = await axios.get(process.env.TIKTOK_VIDEO_API_URL!, {
         params: { url: cleanUrl },
+        headers: { "X-PrimeAPI-Key": key },
+      });
+      return response.data;
+    } catch (err: any) {
+      if (
+        err.response?.status === 429 ||
+        err.response?.data?.error?.includes("limit")
+      ) {
+        console.warn(`Key ${key} reached limit, switching to next key...`);
+        currentKeyIndex = (currentKeyIndex + 1) % TIKTOK_API_KEYS.length;
+        attempts++;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function fetchTikTokPhoto(postId: string) {
+  let attempts = 0;
+
+  while (attempts < TIKTOK_API_KEYS.length) {
+    const key = TIKTOK_API_KEYS[currentKeyIndex];
+    try {
+      const response = await axios.get(process.env.TIKTOK_PHOTOS_API_URL!, {
+        params: { postId },
         headers: { "X-PrimeAPI-Key": key },
       });
       return response.data;
@@ -105,8 +133,24 @@ export async function handleTikTokUrl(ctx: Context) {
     const userInfo = await fetchTikTokUserInfo(url);
 
     if (isPhoto || !TIKTOK_API_KEYS.length) {
-      if (userInfo.video_imgs && userInfo.video_imgs.length > 0) {
-        for (const imgUrl of userInfo.video_imgs) {
+      const photoData = await fetchTikTokPhoto(postId);
+
+      if (!photoData?.itemInfo?.itemStruct?.imagePost?.images?.length) {
+        if (userInfo.video_img) {
+          const photoPath = path.join("/tmp", `tiktok_${Date.now()}.jpg`);
+          await downloadFile(userInfo.video_img, photoPath);
+          await ctx.replyWithPhoto(
+            { source: photoPath },
+            { caption: `📸 TikTok Photo by @${userInfo.nick}` }
+          );
+          unlink(photoPath, () => {});
+        }
+      } else {
+        const images = photoData.itemInfo.itemStruct.imagePost.images;
+        for (const img of images) {
+          const imgUrl = img.imageURL.urlList[0];
+          if (!imgUrl) continue;
+
           const photoPath = path.join("/tmp", `tiktok_${Date.now()}.jpg`);
           await downloadFile(imgUrl, photoPath);
           await ctx.replyWithPhoto(
@@ -115,14 +159,6 @@ export async function handleTikTokUrl(ctx: Context) {
           );
           unlink(photoPath, () => {});
         }
-      } else {
-        const photoPath = path.join("/tmp", `tiktok_${Date.now()}.jpg`);
-        await downloadFile(userInfo.video_img, photoPath);
-        await ctx.replyWithPhoto(
-          { source: photoPath },
-          { caption: `📸 TikTok Photo by @${userInfo.nick}` }
-        );
-        unlink(photoPath, () => {});
       }
     } else {
       const videoData = await fetchTikTokVideo(url);

@@ -11,7 +11,6 @@ import {
   handleVideo,
   handleYouTubeUrl,
   cutAudio,
-  transcribe,
   searchYouTubeMP3,
   downloadYouTubeAudio,
   mergeAndSend,
