@@ -101,6 +101,16 @@ bot.on("text", async (ctx, next) => {
       );
     }
 
+    if (result.tooLong) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        processingMsg.message_id,
+        undefined,
+        result.message
+      );
+      return;
+    }
+
     await ctx.reply(result.message, { parse_mode: "Markdown" });
 
     await ctx.telegram.editMessageText(
