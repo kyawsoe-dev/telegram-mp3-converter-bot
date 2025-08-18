@@ -26,6 +26,6 @@ Built with [Telegraf](https://telegraf.js.org/), [yt-dlp](https://github.com/yt-
 ### 1️⃣ Clone the Repo
 
 ```bash
-git clone https://github.com/kyawsoe-dev/telegram-mp3-converter-bot.git
-cd telegram-mp3-converter-bot
+git clone https://github.com/kyawsoe-dev/telegram-bot.git
+cd telegram-bot
 ```
