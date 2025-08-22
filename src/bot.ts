@@ -1,4 +1,5 @@
 import { Message } from "telegraf/typings/core/types/typegram";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Telegraf, Markup, Context } from "telegraf";
 import { createWriteStream, unlink } from "fs";
 import { randomUUID } from "crypto";
@@ -23,9 +24,15 @@ import {
 } from "./utils";
 
 const bot = new Telegraf(config.BOT_TOKEN);
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const pendingAskUsers = new Set<number>();
+const aiModeUsers = new Set<number>();
 
 bot.telegram.setMyCommands([
   { command: "start", description: "Show welcome message & help" },
+  { command: "ask", description: "Ask AI anything" },
+  { command: "exit", description: "Exit AI mode and return to normal" },
   { command: "search", description: "Search & download music from YouTube" },
   { command: "cut", description: "Trim audio: /cut start=00:30 end=01:20" },
   { command: "merge", description: "Merge multiple audios (TBD)" },
@@ -54,6 +61,8 @@ bot.use(async (ctx, next) => {
 bot.start((ctx) =>
   ctx.reply(
     "\uD83C\uDFB5 Send a video or YouTube link to convert to MP3\n" +
+      "\uD83E\uDD16 /ask — Ask AI (next message only)\n" +
+      "\u2705 /exit — Exit AI mode and return to normal\n" +
       "\uD83C\uDFA7 /search <song name> — Find & download music\n" +
       "\uD83D\uDD0A /cut start=00:30 end=01:20 — Trim audio\n" +
       "\uD83D\uDCC2 /merge — Merge multiple audios (TBD)\n" +
@@ -63,13 +72,86 @@ bot.start((ctx) =>
   )
 );
 
+// ask command
+bot.command("ask", (ctx) => {
+  const userId = ctx.from.id;
+  pendingAskUsers.add(userId);
+  aiModeUsers.add(userId);
+  ctx.reply(
+    "🤖 Send me your question (AI will answer your next message only).\n" +
+      "Or type /exit to stop AI mode."
+  );
+});
+
+// exit command → leave AI mode
+bot.command("exit", (ctx) => {
+  const userId = ctx.from.id;
+  pendingAskUsers.delete(userId);
+  aiModeUsers.delete(userId);
+  ctx.reply("✅ Exited AI mode. Back to normal.");
+});
+
 // text command
+function splitMessage(text: string, chunkSize = 4000): string[] {
+  const result: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    result.push(text.slice(start, start + chunkSize));
+    start += chunkSize;
+  }
+
+  return result;
+}
+
 bot.on("text", async (ctx, next) => {
+  const userId = ctx.from.id;
   const text = ctx.message.text.trim();
 
-  if (text.startsWith("/")) {
-    return next();
+  if (pendingAskUsers.has(userId) || aiModeUsers.has(userId)) {
+    pendingAskUsers.delete(userId);
+
+    const processingMsg = await ctx.reply("🤖 Thinking...");
+
+    try {
+      const result = await model.generateContent(text);
+      const response = result?.response ? await result.response.text() : null;
+
+      if (!response) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          processingMsg.message_id,
+          undefined,
+          "No response. Please try again."
+        );
+        return;
+      }
+
+      const chunks = splitMessage(response, 4000);
+
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        processingMsg.message_id,
+        undefined,
+        chunks[0]
+      );
+
+      for (let i = 1; i < chunks.length; i++) {
+        await ctx.reply(chunks[i]);
+      }
+    } catch (err: any) {
+      console.error("Gemini API error:", err);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        processingMsg.message_id,
+        undefined,
+        `Error: ${err.message}`
+      );
+    }
+    return;
   }
+
+  if (text.startsWith("/")) return next();
 
   if (
     text.startsWith("http") &&
@@ -112,7 +194,6 @@ bot.on("text", async (ctx, next) => {
     }
 
     await ctx.reply(result.message, { parse_mode: "Markdown" });
-
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       processingMsg.message_id,
@@ -121,18 +202,10 @@ bot.on("text", async (ctx, next) => {
     );
 
     const files = await downloadYouTubeAudio(result.url);
-
-    if (!files.length) {
-      throw new Error("Failed to download audio.");
-    }
+    if (!files.length) throw new Error("Failed to download audio.");
 
     await ctx.replyWithAudio({ source: files[0] });
-
-    for (const file of files) {
-      unlink(file, (err) => {
-        if (err) console.error(`Failed to delete file ${file}:`, err);
-      });
-    }
+    for (const file of files) unlink(file, (err) => err && console.error(err));
 
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
   } catch (err: any) {
@@ -141,7 +214,7 @@ bot.on("text", async (ctx, next) => {
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      `Error: ${err.message}`
+      `❌ Error: ${err.message}`
     );
   }
 });

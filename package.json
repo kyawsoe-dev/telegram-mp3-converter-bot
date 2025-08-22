@@ -9,11 +9,15 @@
     "start": "node dist/bot.js",
     "dev": "ts-node src/bot.ts"
   },
-  "keywords": ["telegram", "bot"],
+  "keywords": [
+    "telegram",
+    "bot"
+  ],
   "author": "KS",
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.11.0",
     "dotenv": "^17.2.1",
     "ffmpeg-static": "^5.1.0",
