@@ -5,6 +5,8 @@ import { createWriteStream, unlink } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import fetch from "node-fetch";
+import Tesseract from "tesseract.js";
+import fs from "fs";
 import {
   timeStrToSeconds,
   secondsToTimeStr,
@@ -38,6 +40,7 @@ bot.telegram.setMyCommands([
   { command: "merge", description: "Merge multiple audios (TBD)" },
   { command: "mp3", description: "Download MP3 from URL" },
   { command: "video", description: "Download video from URL" },
+  { command: "photo", description: "Send a photo to extract text (OCR)" },
 ]);
 
 bot.use(async (ctx, next) => {
@@ -68,6 +71,7 @@ bot.start((ctx) =>
       "\uD83D\uDCC2 /merge — Merge multiple audios (TBD)\n" +
       "\uD83C\uDFB5 /mp3 <url> — Download MP3\n" +
       "\uD83C\uDFAC /video <url> — Download video\n" +
+      "\uD83D\uDDBC /photo — Send a photo to extract text (OCR)\n" +
       "You can also just send a song name to search directly."
   )
 );
@@ -89,6 +93,11 @@ bot.command("exit", (ctx) => {
   pendingAskUsers.delete(userId);
   aiModeUsers.delete(userId);
   ctx.reply("✅ Exited AI mode. Back to normal.");
+});
+
+// photo command
+bot.command("photo", async (ctx) => {
+  ctx.reply("📸 Please send a photo, and I will extract the text from it.");
 });
 
 // text command
@@ -214,7 +223,7 @@ bot.on("text", async (ctx, next) => {
       ctx.chat.id,
       processingMsg.message_id,
       undefined,
-      `❌ Error: ${err.message}`
+      `Error: ${err.message}`
     );
   }
 });
@@ -457,6 +466,29 @@ bot.command("merge", async (ctx: Context) => {
   await ctx.reply(`⏳ Merging ${audios.length} audios...`);
   await mergeAndSend(ctx, audios);
   userAudios[userId] = [];
+});
+
+// detect image to text
+bot.on("photo", async (ctx) => {
+  try {
+    const photo = ctx.message.photo[ctx.message.photo.length - 1];
+    const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+
+    const response = await fetch(fileLink.href);
+    const buffer = await response.buffer();
+    fs.writeFileSync("temp.jpg", buffer);
+
+    const {
+      data: { text },
+    } = await Tesseract.recognize("temp.jpg", "eng+mya");
+
+    ctx.reply(`📖 Detected text:\n\n${text}`);
+
+    fs.unlinkSync("temp.jpg");
+  } catch (err) {
+    console.error(err);
+    ctx.reply("Failed to read text from the image.");
+  }
 });
 
 // start the bot
