@@ -22,6 +22,7 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
       ffmpegLocation: config.FFMPEG_PATH,
       noPlaylist: true,
       format: "bestaudio/best",
+      "--no-write-cookies": true,
     };
     if (config.COOKIES_PATH) {
       console.log(`[DEBUG] Using cookies file: ${config.COOKIES_PATH}`);
@@ -32,7 +33,10 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
     await Promise.race([
       ytdlp(url, options),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("yt-dlp timed out after 10 minutes")), 600000),
+        setTimeout(
+          () => reject(new Error("yt-dlp timed out after 10 minutes")),
+          600000
+        )
       ),
     ]);
 
@@ -55,7 +59,9 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
     console.log(`[INFO] Final files ready: ${renamed.join(", ")}`);
     return renamed;
   } catch (err) {
-    console.error(`[ERROR] Failed to download audio: ${(err as Error).message}`);
+    console.error(
+      `[ERROR] Failed to download audio: ${(err as Error).message}`
+    );
     throw err;
   }
 }

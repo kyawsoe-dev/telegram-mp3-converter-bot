@@ -1,6 +1,5 @@
 import { downloadYouTubeAudio } from "../utils/downloader";
 import { unlink, statSync } from "fs";
-import { log } from "../logger"; // if you prefer console.log, see below
 import ytdlp from "yt-dlp-exec";
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
