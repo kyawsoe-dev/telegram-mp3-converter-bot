@@ -22,14 +22,16 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
       ffmpegLocation: config.FFMPEG_PATH,
       noPlaylist: true,
       format: "bestaudio/best",
-      "--no-write-cookies": true,
     };
+
     if (config.COOKIES_PATH) {
       console.log(`[DEBUG] Using cookies file: ${config.COOKIES_PATH}`);
       options.cookies = config.COOKIES_PATH;
+      options.noCookieUpdate = true;
     }
 
     console.log("[INFO] Running yt-dlp...");
+    
     await Promise.race([
       ytdlp(url, options),
       new Promise((_, reject) =>
