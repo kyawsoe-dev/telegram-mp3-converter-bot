@@ -7,6 +7,7 @@ import { join } from "path";
 import fetch from "node-fetch";
 import Tesseract from "tesseract.js";
 import fs from "fs";
+import express from "express";
 import {
   timeStrToSeconds,
   secondsToTimeStr,
@@ -26,6 +27,17 @@ import {
 } from "./utils";
 
 const bot = new Telegraf(config.BOT_TOKEN);
+if (!process.env.BOT_TOKEN) {
+  console.error("Missing BOT_TOKEN in .env");
+  process.exit(1);
+}
+if (!process.env.WEBHOOK_URL) {
+  console.error("Missing WEBHOOK_URL in .env");
+  process.exit(1);
+}
+
+const app = express();
+const PORT = process.env.PORT || 3000;
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 const pendingAskUsers = new Set<number>();
@@ -45,18 +57,40 @@ bot.telegram.setMyCommands([
 
 bot.use(async (ctx, next) => {
   const isText = ctx.updateType === "message" && "text" in ctx.message!;
+  const isPhoto = ctx.updateType === "message" && "photo" in ctx.message!;
 
-  log("Incoming", {
+  let messageContent: unknown;
+
+  if (isText) {
+    messageContent = (ctx.message as any).text;
+  } else if (isPhoto) {
+    const photos = (ctx.message as any).photo;
+    const fileId = photos[photos.length - 1].file_id;
+    try {
+      const fileLink = await ctx.telegram.getFileLink(fileId);
+      messageContent = fileLink.href;
+    } catch (err) {
+      messageContent = "Error retrieving photo link";
+    }
+  } else {
+    messageContent = ctx.updateType;
+  }
+
+  const logData = {
     type: ctx.updateType,
     user: ctx.from?.username || ctx.from?.id,
     chatId: ctx.chat?.id,
-    message: isText ? (ctx.message as any).text : ctx,
-  });
+    message: messageContent,
+  };
+
+  log("Incoming", logData);
+  console.log("Incoming", logData);
 
   try {
     await next();
   } catch (err) {
     log("Middleware error", err);
+    console.error("Middleware error", err);
   }
 });
 
@@ -471,6 +505,8 @@ bot.command("merge", async (ctx: Context) => {
 // detect image to text
 bot.on("photo", async (ctx) => {
   try {
+    const processingMsg = await ctx.reply("⏳ Processing your image...");
+
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileLink = await ctx.telegram.getFileLink(photo.file_id);
 
@@ -482,26 +518,26 @@ bot.on("photo", async (ctx) => {
       data: { text },
     } = await Tesseract.recognize("temp.jpg", "eng+mya");
 
-    ctx.reply(`📖 Detected text:\n\n${text}`);
-
     fs.unlinkSync("temp.jpg");
+
+    await ctx.deleteMessage(processingMsg.message_id);
+
+    await ctx.reply(`📖 Detected text:\n\n${text}`);
   } catch (err) {
     console.error(err);
-    ctx.reply("Failed to read text from the image.");
+    await ctx.reply("Failed to read text from the image.");
   }
 });
 
-// start the bot
-bot.launch().then(() => log("✅ Bot is running..."));
+// Express Webhook
+app.use(express.json());
+app.use(bot.webhookCallback("/webhook"));
 
-// handle graceful shutdown
-process.once("SIGINT", () => {
-  log("🛑 Bot stopped (SIGINT)");
-  bot.stop("SIGINT");
-});
+// Register webhook with Telegram
+bot.telegram.setWebhook(`${process.env.WEBHOOK_URL}/webhook`);
 
-// handle graceful shutdown on SIGTERM
-process.once("SIGTERM", () => {
-  log("🛑 Bot stopped (SIGTERM)");
-  bot.stop("SIGTERM");
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  log(`🚀 Webhook server started on port ${PORT}`);
 });
