@@ -1,19 +1,25 @@
 import { downloadYouTubeAudio } from "../utils/downloader";
 import { unlink, statSync } from "fs";
-import { log } from "../logger";
+import { log } from "../logger"; // if you prefer console.log, see below
 import ytdlp from "yt-dlp-exec";
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
+import { config } from "../config";
 
 async function getYouTubeVideoInfo(url: string) {
+  console.log(`[INFO] Fetching video info for: ${url}`);
+
   const raw = await ytdlp(url, {
     dumpSingleJson: true,
     noPlaylist: true,
+    ...(config.COOKIES_PATH ? { cookies: config.COOKIES_PATH } : {}),
   });
+
   const info = typeof raw === "string" ? JSON.parse(raw) : raw;
 
+  console.log(`[INFO] Video title: ${info.title}, duration: ${info.duration}s`);
   return {
     title: info.title as string,
     uploader: info.uploader as string,
@@ -27,6 +33,8 @@ export function compressAudio(
   outputPath: string,
   onProgress?: (percent: number) => void
 ): Promise<void> {
+  console.log(`[INFO] Compressing file: ${inputPath}`);
+
   return new Promise((resolve, reject) => {
     let lastUpdate = Date.now();
 
@@ -38,18 +46,26 @@ export function compressAudio(
       .on("progress", (progress) => {
         const percent = progress.percent ? Math.min(progress.percent, 100) : 0;
         if (onProgress && Date.now() - lastUpdate >= 3000) {
+          console.log(`[DEBUG] Compression progress: ${percent.toFixed(1)}%`);
           onProgress(percent);
           lastUpdate = Date.now();
         }
       })
-      .on("end", () => resolve())
-      .on("error", (err) => reject(err))
+      .on("end", () => {
+        console.log("[INFO] Compression finished.");
+        resolve();
+      })
+      .on("error", (err) => {
+        console.error("[ERROR] Compression failed:", err);
+        reject(err);
+      })
       .save(outputPath);
   });
 }
 
 export async function handleYouTubeUrl(ctx: any) {
   const url = ctx.message.text.trim();
+  console.log(`[INFO] Received YouTube URL: ${url}`);
 
   if (!url.startsWith("http")) {
     return ctx.reply("❗ Please send a valid YouTube URL.");
@@ -59,8 +75,12 @@ export async function handleYouTubeUrl(ctx: any) {
 
   try {
     const info = await getYouTubeVideoInfo(url);
+
     const maxDurationSeconds = 60 * 60;
     if (info.duration > maxDurationSeconds) {
+      console.warn(
+        `[WARN] Skipping: duration ${info.duration}s exceeds ${maxDurationSeconds}s`
+      );
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         progressMsg.message_id,
@@ -70,12 +90,12 @@ export async function handleYouTubeUrl(ctx: any) {
       return;
     }
 
+    console.log("[INFO] Downloading audio...");
     const files = await downloadYouTubeAudio(url);
-
     if (!files.length) throw new Error("Audio download failed.");
 
     const originalFile = files[0];
-    const originalBaseName = path.basename(originalFile);
+    console.log(`[INFO] Downloaded: ${originalFile}`);
 
     const compressedFile = path.join(
       os.tmpdir(),
@@ -97,8 +117,12 @@ export async function handleYouTubeUrl(ctx: any) {
 
     const stats = statSync(compressedFile);
     const maxFileSize = 50 * 1024 * 1024;
+    console.log(
+      `[INFO] Compressed size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`
+    );
 
     if (stats.size > maxFileSize) {
+      console.warn("[WARN] File too large even after compression.");
       [originalFile, compressedFile].forEach((file) =>
         unlink(file, (err) => {
           if (err) console.error(`Failed to delete file ${file}:`, err);
@@ -121,8 +145,9 @@ export async function handleYouTubeUrl(ctx: any) {
         .padStart(2, "0")}\n` +
       `🔗 [Watch on YouTube](${info.webpage_url})`;
 
+    console.log("[INFO] Sending audio to Telegram...");
     await ctx.replyWithAudio(
-      { source: compressedFile, filename: originalBaseName },
+      { source: compressedFile, filename: path.basename(originalFile) },
       { caption, parse_mode: "Markdown" }
     );
 
@@ -138,8 +163,10 @@ export async function handleYouTubeUrl(ctx: any) {
       undefined,
       "Done! Enjoy your audio."
     );
+
+    console.log("[INFO] Process completed successfully.");
   } catch (err: any) {
-    log("YouTube handler error", err);
+    console.error("[ERROR] YouTube handler failed:", err);
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       progressMsg.message_id,

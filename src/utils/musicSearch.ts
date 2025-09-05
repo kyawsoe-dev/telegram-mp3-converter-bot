@@ -1,4 +1,5 @@
 import ytdlp from "yt-dlp-exec";
+import { config } from "../config";
 
 interface YtDlpSearchEntry {
   webpage_url?: string;
@@ -31,18 +32,27 @@ const maxDurationSeconds = 60 * 60;
 export async function searchYouTubeMP3(
   query: string
 ): Promise<SearchResult | undefined> {
+  console.log(`[INFO] Searching YouTube for query: "${query}"`);
+
   const raw = await ytdlp(`ytsearch1:${query}`, {
     dumpSingleJson: true,
     noPlaylist: true,
+    ...(config.COOKIES_PATH ? { cookies: config.COOKIES_PATH } : {}),
   });
 
   const result =
     typeof raw === "string" ? JSON.parse(raw) : (raw as YtDlpSearchResult);
 
   const first = result.entries?.[0];
-  if (!first?.webpage_url || !first.title) return undefined;
+  if (!first?.webpage_url || !first.title) {
+    console.warn("[WARN] No search results found.");
+    return undefined;
+  }
+
+  console.log(`[INFO] First result: ${first.title} (${first.webpage_url})`);
 
   if (first.duration && first.duration > maxDurationSeconds) {
+    console.warn("[WARN] Video too long, skipping.");
     return {
       url: first.webpage_url,
       title: first.title,
@@ -63,6 +73,10 @@ export async function searchYouTubeMP3(
     `⌛ Duration: ${durationFormatted}\n` +
     (first.uploader ? `👤 Uploader: ${first.uploader}\n` : "") +
     `🔗 [Watch on YouTube](${first.webpage_url})`;
+
+  console.log(
+    `[INFO] Search result prepared: ${first.title} (${durationFormatted})`
+  );
 
   return {
     url: first.webpage_url,
