@@ -13,7 +13,9 @@ async function getYouTubeVideoInfo(url: string) {
   const raw = await ytdlp(url, {
     dumpSingleJson: true,
     noPlaylist: true,
-    ...(config.COOKIES_PATH ? { cookies: config.COOKIES_PATH } : {}),
+    ...(config.COOKIES_PATH
+      ? { cookies: config.COOKIES_PATH, noCookieUpdate: true }
+      : {}),
   });
 
   const info = typeof raw === "string" ? JSON.parse(raw) : raw;

@@ -37,7 +37,9 @@ export async function searchYouTubeMP3(
   const raw = await ytdlp(`ytsearch1:${query}`, {
     dumpSingleJson: true,
     noPlaylist: true,
-    ...(config.COOKIES_PATH ? { cookies: config.COOKIES_PATH } : {}),
+    ...(config.COOKIES_PATH
+      ? { cookies: config.COOKIES_PATH, noCookieUpdate: true }
+      : {}),
   });
 
   const result =
