@@ -4,21 +4,30 @@ import ytdlp from "yt-dlp-exec";
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import os from "os";
+import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import { config } from "../config";
 
 async function getYouTubeVideoInfo(url: string) {
   console.log(`[INFO] Fetching video info for: ${url}`);
 
+  let cookiesPath: string | undefined;
+  if (config.COOKIES_PATH) {
+    const tmpCookies = path.join(os.tmpdir(), `cookies-${Date.now()}.txt`);
+    await fs.copyFile(config.COOKIES_PATH, tmpCookies);
+    cookiesPath = tmpCookies;
+  }
+
   const raw = await ytdlp(url, {
     dumpSingleJson: true,
     noPlaylist: true,
-    ...(config.COOKIES_PATH
-      ? { cookies: config.COOKIES_PATH, noCookieUpdate: true }
-      : {}),
+    ...(cookiesPath ? { cookies: cookiesPath } : {}),
   });
 
   const info = typeof raw === "string" ? JSON.parse(raw) : raw;
+  console.log(`[INFO] Video title: ${info.title}, duration: ${info.duration}s`);
+
+  if (cookiesPath) await fs.unlink(cookiesPath);
 
   console.log(`[INFO] Video title: ${info.title}, duration: ${info.duration}s`);
   return {

@@ -1,6 +1,8 @@
 import ytdlp from "yt-dlp-exec";
 import { glob } from "glob";
 import { promises as fs } from "fs";
+import path from "path";
+import os from "os";
 import { config } from "../config";
 import { sanitize } from "./sanitize";
 
@@ -24,14 +26,17 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
       format: "bestaudio/best",
     };
 
+    let tempCookiesPath: string | undefined;
     if (config.COOKIES_PATH) {
-      console.log(`[DEBUG] Using cookies file: ${config.COOKIES_PATH}`);
-      options.cookies = config.COOKIES_PATH;
-      options.noCookieUpdate = true;
+      tempCookiesPath = path.join(os.tmpdir(), `cookies-${Date.now()}.txt`);
+      console.log(
+        `[DEBUG] Copying cookies to temporary file: ${tempCookiesPath}`
+      );
+      await fs.copyFile(config.COOKIES_PATH, tempCookiesPath);
+      options.cookies = tempCookiesPath;
     }
-
     console.log("[INFO] Running yt-dlp...");
-    
+
     await Promise.race([
       ytdlp(url, options),
       new Promise((_, reject) =>
@@ -41,6 +46,14 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
         )
       ),
     ]);
+
+    if (tempCookiesPath) {
+      await fs.unlink(tempCookiesPath).catch(() => {
+        console.warn(
+          `[WARN] Failed to delete temp cookies file: ${tempCookiesPath}`
+        );
+      });
+    }
 
     const files = await glob("*.mp3");
     if (files.length === 0) {

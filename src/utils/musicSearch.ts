@@ -1,5 +1,8 @@
 import ytdlp from "yt-dlp-exec";
 import { config } from "../config";
+import path from "path";
+import os from "os";
+import { promises as fs } from "fs";
 
 interface YtDlpSearchEntry {
   webpage_url?: string;
@@ -34,13 +37,26 @@ export async function searchYouTubeMP3(
 ): Promise<SearchResult | undefined> {
   console.log(`[INFO] Searching YouTube for query: "${query}"`);
 
-  const raw = await ytdlp(`ytsearch1:${query}`, {
+  let tempCookiesPath: string | undefined;
+  const options: Record<string, any> = {
     dumpSingleJson: true,
     noPlaylist: true,
-    ...(config.COOKIES_PATH
-      ? { cookies: config.COOKIES_PATH, noCookieUpdate: true }
-      : {}),
-  });
+  };
+
+  if (config.COOKIES_PATH) {
+    tempCookiesPath = path.join(os.tmpdir(), `cookies-${Date.now()}.txt`);
+    console.log(`[DEBUG] Copying cookies to temporary file: ${tempCookiesPath}`);
+    await fs.copyFile(config.COOKIES_PATH, tempCookiesPath);
+    options.cookies = tempCookiesPath;
+  }
+
+  const raw = await ytdlp(`ytsearch1:${query}`, options);
+
+  if (tempCookiesPath) {
+    await fs.unlink(tempCookiesPath).catch(() => {
+      console.warn(`[WARN] Failed to delete temp cookies file: ${tempCookiesPath}`);
+    });
+  }
 
   const result =
     typeof raw === "string" ? JSON.parse(raw) : (raw as YtDlpSearchResult);
