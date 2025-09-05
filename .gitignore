@@ -59,3 +59,7 @@ coverage/
 # ESLint / Prettier cache
 .eslintcache
 .prettiercache
+
+
+# Text File
+*.txt

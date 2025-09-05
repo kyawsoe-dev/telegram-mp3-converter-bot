@@ -8,20 +8,20 @@ export async function downloadYouTubeAudio(url: string): Promise<string[]> {
   const oldFiles = await glob("*.mp3");
   await Promise.all(oldFiles.map((f) => fs.unlink(f)));
 
-  await Promise.race([
-    await ytdlp(url, {
-      extractAudio: true,
-      audioFormat: "mp3",
-      audioQuality: 192,
-      output: "%(title)s.%(ext)s",
-      ffmpegLocation: config.FFMPEG_PATH,
-      noPlaylist: true,
-      format: "bestaudio/best",
-    }),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("yt-dlp timed out")), 3600000)
-    ),
-  ]);
+  const options: Record<string, any> = {
+    extractAudio: true,
+    audioFormat: "mp3",
+    audioQuality: 192,
+    output: "%(title)s.%(ext)s",
+    ffmpegLocation: config.FFMPEG_PATH,
+    noPlaylist: true,
+    format: "bestaudio/best",
+  };
+  if (config.COOKIES_PATH) {
+    options.cookies = config.COOKIES_PATH;
+  }
+
+  await Promise.race([ytdlp(url, options), 600000]);
 
   const files = await glob("*.mp3");
   if (files.length === 0) throw new Error("No MP3 files found.");
